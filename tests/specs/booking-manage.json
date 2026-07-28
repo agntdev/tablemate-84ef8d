@@ -1,0 +1,11 @@
+[
+  {
+    "name": "My bookings has a helpful empty state",
+    "steps": [
+      {
+        "send": { "callback": "booking:mine" },
+        "expect": [{ "method": "editMessageText", "payload": { "text": "No bookings yet — tap Book a table to make one." } }]
+      }
+    ]
+  }
+]
