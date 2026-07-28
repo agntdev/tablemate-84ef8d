@@ -1,0 +1,13 @@
+[
+  {
+    "name": "Guest can complete a booking with buttons and a name",
+    "steps": [
+      { "send": { "callback": "booking:start" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Pick a date for your table." } }] },
+      { "send": { "callback": "booking:date:today" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Choose a time. You’ll pick your party size next." } }] },
+      { "send": { "callback": "booking:time:11:00" }, "expect": [{ "method": "editMessageText", "payload": { "text": "How many people are joining you?" } }] },
+      { "send": { "callback": "booking:party:2" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Add a name or contact for the booking. You can also skip this." } }] },
+      { "send": { "text": "Avery" }, "expect": [{ "method": "sendMessage" }] },
+      { "send": { "callback": "booking:confirm" }, "expect": [{ "method": "editMessageText" }] }
+    ]
+  }
+]

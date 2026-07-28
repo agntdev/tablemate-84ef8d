@@ -6,7 +6,11 @@ import type { StorageAdapter } from "grammy";
 // bot grows. Durable domain data must NOT live here — use the toolkit's
 // persistent storage (see AGENTS.md).
 export interface Session {
-  // example: step?: "awaiting_amount";
+  step?: "idle" | "choosing-date" | "choosing-time" | "awaiting-party" | "awaiting-name" | "confirming";
+  booking?: { date?: string; time?: string; partySize?: number; guestName?: string };
+  expiresAt?: number;
+  /** Local and harness fallback for the restaurant repository. Redis keeps this durable on Node. */
+  restaurant?: import("./reservations.js").RestaurantData;
 }
 
 export type Ctx = BotContext<Session>;

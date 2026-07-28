@@ -1,17 +1,7 @@
 import { Composer } from "grammy";
-
-// SCAFFOLD — generated from the bot blueprint BEFORE the agent runs.
-// Keep a LIVE registration (.command / .callbackQuery / …) so this feature is
-// never an empty stub. Replace the reply body with real logic + copy; if you
-// change the user-facing text, update tests/specs to match EXACTLY.
-// Do NOT rewrite src/bot.ts — buildBot() already auto-loads this module.
-// Menu: wire this into /start via registerMainMenuItem({ label: "Today's remaining capacity", data: "admin:capacity" }) if the toolkit exposes it.
-
-const composer = new Composer();
-
-composer.callbackQuery("admin:capacity", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply("Displays available table slots for today");
-});
-
+import type { Ctx } from "../bot.js";
+import { inlineButton, inlineKeyboard } from "../toolkit/index.js";
+import { capacity, dateFor, isOwner } from "../reservations.js";
+const composer = new Composer<Ctx>();
+composer.callbackQuery("admin:capacity", async (ctx) => { await ctx.answerCallbackQuery(); if (!isOwner(ctx)) { await ctx.editMessageText("This area is for the restaurant owner."); return; } const c = capacity(ctx, dateFor("today")); await ctx.editMessageText(`Today has ${c.remaining} seats remaining. ${c.booked} of ${c.seats} seats are booked.`, { reply_markup: inlineKeyboard([[inlineButton("Back to admin", "admin:menu")]]) }); });
 export default composer;

@@ -1,17 +1,30 @@
 import { Composer } from "grammy";
+import type { Ctx } from "../bot.js";
+import { inlineButton, inlineKeyboard, registerMainMenuItem } from "../toolkit/index.js";
+import { createBooking, dateFor, readableDate, reminderHours, slots } from "../reservations.js";
+import { now } from "../clock.js";
+import { remindAt, type WorkerEnv } from "../toolkit/session/durable.js";
 
-// SCAFFOLD — generated from the bot blueprint BEFORE the agent runs.
-// Keep a LIVE registration (.command / .callbackQuery / …) so this feature is
-// never an empty stub. Replace the reply body with real logic + copy; if you
-// change the user-facing text, update tests/specs to match EXACTLY.
-// Do NOT rewrite src/bot.ts — buildBot() already auto-loads this module.
-// Menu: wire this into /start via registerMainMenuItem({ label: "Book a table", data: "booking:start" }) if the toolkit exposes it.
-
-const composer = new Composer();
-
-composer.callbackQuery("booking:start", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply("Initiates the table booking flow");
-});
-
+registerMainMenuItem({ label: "📅 Book a table", data: "booking:start", order: 10 });
+const composer = new Composer<Ctx>();
+const back = inlineButton("Back", "menu:main");
+function clear(ctx: Ctx) { ctx.session.step = "idle"; ctx.session.booking = undefined; ctx.session.expiresAt = undefined; }
+function expiry(ctx: Ctx) { ctx.session.expiresAt = now().getTime() + 5 * 60_000; }
+async function scheduleReminder(ctx: Ctx, id: string, date: string, time: string) {
+  const env = (ctx as Ctx & { env?: WorkerEnv }).env;
+  if (!env || !ctx.chat) return;
+  const when = new Date(`${date}T${time}:00Z`).getTime() - reminderHours(ctx) * 60 * 60_000;
+  if (when <= now().getTime()) return;
+  await remindAt(env, ctx.chat.id, when, `Reminder: your TableReserve booking is at ${time} on ${readableDate(date)}.`, inlineKeyboard([[inlineButton("Reschedule", `booking:reschedule:${id}`), inlineButton("Cancel", `booking:cancel:${id}`)]]));
+}
+composer.use(async (ctx, next) => { if (ctx.session.expiresAt && now().getTime() > ctx.session.expiresAt) { clear(ctx); if (ctx.callbackQuery || ctx.message?.text) await ctx.reply("That booking step timed out. Tap Book a table to start again."); } return next(); });
+async function dates(ctx: Ctx) { ctx.session.step = "choosing-date"; expiry(ctx); await ctx.editMessageText("Pick a date for your table.", { reply_markup: inlineKeyboard([[inlineButton(`Today · ${readableDate(dateFor("today"))}`, "booking:date:today")], [inlineButton(`Tomorrow · ${readableDate(dateFor("tomorrow"))}`, "booking:date:tomorrow")], [back]]) }); }
+composer.callbackQuery("booking:start", async (ctx) => { await ctx.answerCallbackQuery(); await dates(ctx); });
+composer.callbackQuery(/^booking:date:(today|tomorrow)$/, async (ctx) => { await ctx.answerCallbackQuery(); const date = dateFor(ctx.match[1] as "today" | "tomorrow"); ctx.session.booking = { date }; ctx.session.step = "choosing-time"; expiry(ctx); await ctx.editMessageText("Choose a time. You’ll pick your party size next.", { reply_markup: inlineKeyboard([...slots(ctx, date, 1).map((time) => [inlineButton(time, `booking:time:${time}`)]), [back]]) }); });
+composer.callbackQuery(/^booking:time:(\d\d:\d\d)$/, async (ctx) => { await ctx.answerCallbackQuery(); if (!ctx.session.booking?.date) { await ctx.reply("That booking step has expired. Tap Book a table to start again."); return; } ctx.session.booking.time = ctx.match[1]; ctx.session.step = "awaiting-party"; expiry(ctx); await ctx.editMessageText("How many people are joining you?", { reply_markup: inlineKeyboard([[1,2,3,4,5,6,7,8].map((n) => inlineButton(String(n), `booking:party:${n}`)), [inlineButton("9+ people", "booking:party:9")], [back]]) }); });
+composer.callbackQuery(/^booking:party:(\d+)$/, async (ctx) => { await ctx.answerCallbackQuery(); const partySize = Number(ctx.match[1]); const draft = ctx.session.booking; if (!draft?.date || !draft.time || !slots(ctx, draft.date, partySize).includes(draft.time)) { await ctx.editMessageText("That party size won’t fit at this time. Choose another time or a smaller party.", { reply_markup: inlineKeyboard([[inlineButton("Choose another time", `booking:date:${draft?.date === dateFor("tomorrow") ? "tomorrow" : "today"}`)], [back]]) }); return; } draft.partySize = partySize; ctx.session.step = "awaiting-name"; expiry(ctx); await ctx.editMessageText("Add a name or contact for the booking. You can also skip this.", { reply_markup: inlineKeyboard([[inlineButton("Skip", "booking:name:skip")], [back]]) }); });
+composer.callbackQuery("booking:name:skip", async (ctx) => { await ctx.answerCallbackQuery(); if (!ctx.session.booking) return; ctx.session.booking.guestName = "Guest"; ctx.session.step = "confirming"; await ctx.editMessageText(`Book a table for ${ctx.session.booking.partySize} at ${ctx.session.booking.time} on ${readableDate(ctx.session.booking.date!)}?`, { reply_markup: inlineKeyboard([[inlineButton("Confirm booking", "booking:confirm")], [inlineButton("Cancel", "booking:draft:cancel")]]) }); });
+composer.on("message:text", async (ctx, next) => { if (ctx.session.step !== "awaiting-name") return next(); const name = ctx.message.text.trim(); if (name.length < 2 || name.length > 80) { await ctx.reply("Add a short name or contact, or tap Skip."); return; } ctx.session.booking!.guestName = name; ctx.session.step = "confirming"; await ctx.reply(`Book a table for ${ctx.session.booking!.partySize} at ${ctx.session.booking!.time} on ${readableDate(ctx.session.booking!.date!)}?`, { reply_markup: inlineKeyboard([[inlineButton("Confirm booking", "booking:confirm")], [inlineButton("Cancel", "booking:draft:cancel")]]) }); });
+composer.callbackQuery("booking:confirm", async (ctx) => { await ctx.answerCallbackQuery(); const draft = ctx.session.booking; if (!draft?.date || !draft.time || !draft.partySize || !draft.guestName) { await ctx.editMessageText("That booking step has expired. Tap Book a table to start again."); clear(ctx); return; } const saved = createBooking(ctx, draft as Required<typeof draft>); if (!saved) { await ctx.editMessageText("That slot was just taken. Choose another time.", { reply_markup: inlineKeyboard([[inlineButton("Choose another time", "booking:start")]]) }); clear(ctx); return; } await scheduleReminder(ctx, saved.id, saved.booking_date, saved.booking_time); clear(ctx); await ctx.editMessageText(`You’re booked for ${saved.party_size} at ${saved.booking_time} on ${readableDate(saved.booking_date)}. Your code is ${saved.reference_code}.`, { reply_markup: inlineKeyboard([[inlineButton("Reschedule", `booking:reschedule:${saved.id}`), inlineButton("Cancel", `booking:cancel:${saved.id}`)], [back]]) }); });
+composer.callbackQuery("booking:draft:cancel", async (ctx) => { await ctx.answerCallbackQuery(); clear(ctx); await ctx.editMessageText("Your draft is cancelled. Tap Book a table when you’re ready.", { reply_markup: inlineKeyboard([[back]]) }); });
 export default composer;

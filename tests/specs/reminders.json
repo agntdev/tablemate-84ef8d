@@ -1,0 +1,8 @@
+[
+  {
+    "name": "A stale reminder is handled safely",
+    "steps": [
+      { "send": { "callback": "booking:reminder:99" }, "expect": [{ "method": "editMessageText", "payload": { "text": "That booking is no longer active." } }] }
+    ]
+  }
+]

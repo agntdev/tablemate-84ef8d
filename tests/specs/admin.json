@@ -7,7 +7,7 @@
           {
             "method": "sendMessage",
             "payload": {
-              "text": "Opens admin menu for owners to view bookings and capacity"
+              "text": "Manage today’s reservations and restaurant settings."
             }
           }
         ],
